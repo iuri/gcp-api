@@ -1,0 +1,40 @@
+{
+    "faces": [
+        {
+            "attributes": {
+                "age": 29.5397930145,
+                "eyeglasses": 0,
+                "gender": 1,
+                "emotions": {
+                    "estimations": {
+                        "anger": 1.71027e-05,
+                        "disgust": 0.0013669978,
+                        "fear": 1.3153e-06,
+                        "happiness": 0.000149099,
+                        "neutral": 0.9983531237,
+                        "sadness": 0.0001118569,
+                        "surprise": 5.648e-07
+                    },
+                    "predominant_emotion": "neutral"
+                }
+            },
+            "id": "2367c866-e4c9-4b25-8854-29bde88f78f8",
+            "rect": {
+                "height": 121,
+                "width": 98,
+                "x": 35,
+                "y": 85
+            },
+            "score": 0.954215765,
+            "rectISO": {
+                "height": 256,
+                "width": 192,
+                "x": -13,
+                "y": 17
+            }
+        }
+    ],
+    "creation_date": "2025-04-01 13:55:03.976181",
+    "host": "SMSNG001",
+    "filename": "2025-04-01 13:55:03.976181_SMSNG001_zdwhssvanpgs.jpg"
+}

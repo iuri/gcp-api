@@ -1,0 +1,33 @@
+runtime: python  # Use the latest supported Python version
+env: flex
+
+runtime_config:
+  operating_system: ubuntu22
+  python_version: 3
+
+
+entrypoint: gunicorn -w 2 -b :$PORT main:app  # Use Gunicorn for production
+
+service_account: lunavisionlabs@appspot.gserviceaccount.com
+
+resources:
+  cpu: 1
+  memory_gb: 0.5
+  disk_size_gb: 10
+
+instance_class: F1  # Use a lightweight instance
+automatic_scaling:
+  min_num_instances: 1
+  max_num_instances: 1
+
+
+env_variables:
+  GCS_BUCKET_NAME: "lunavisionlabs.appspot.com"
+  VERSION: $GAE_VERSION
+  ENV: "dev"
+
+
+handlers:
+  - url: /.*
+    script: auto
+    secure: always  # Enforce HTTPS
