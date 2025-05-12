@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session, redirect, url_for
 import os, logging
 from dotenv import load_dotenv
 from google.cloud import storage, bigquery
@@ -7,8 +7,20 @@ import time
 import threading
 from werkzeug.utils import secure_filename
 
+
+import base64
+from email.mime.text import MIMEText
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
+
+
+
 # from google.cloud import storage
 app = Flask(__name__)
+
+app.secret_key = '!@BRaC@DaBR@!'  # <- must be a strong string, not random every run
+
 
 load_dotenv()
 
@@ -18,6 +30,17 @@ GCS_BUCKET = os.environ.get("GCS_BUCKET_NAME")
 PROJECT_ID = "lunavisionlabs" # Replace with your GCP project ID
 BQ_DATASET = "computervision"  # Replace with your BigQuery dataset
 BQ_TABLE = "faces"  # Replace with your BigQuery table
+
+
+# Path to the credentials.json you downloaded
+SERVICE_ACCOUNT_FILE = './lunavisionlabs-48f46e544921.json'
+SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+
+service = build('gmail', 'v1', credentials=credentials)
+
 
 # Allowed Extensions
 ALLOWED_EXTENSIONS = {'json'}
@@ -53,12 +76,22 @@ def gcs_to_bigquery(filename):
         print(f"Error: File {blob_path} not found in bucket {bucket}")
         return
     
-    try:
-        bigquery_client = bigquery.Client()
+   
+    bigquery_client = bigquery.Client()
 
-        # Define BigQuery table reference
-        table_ref = bigquery_client.dataset(BQ_DATASET).table(BQ_TABLE)
+    # Define BigQuery table reference
+    table_ref = bigquery_client.dataset(BQ_DATASET).table(BQ_TABLE)
 
+    # List files in the specified folder
+    blobs = bucket.list_blobs(prefix='json')
+
+    # Process each JSON file in the folder
+    for blob in blobs:
+        # print('blob', blob)
+
+        if not blob.name.endswith(".json"):
+            continue  # Skip non-JSON files
+    
         # Read JSON file content
         json_data = json.loads(blob.download_as_text()) 
 
@@ -66,7 +99,7 @@ def gcs_to_bigquery(filename):
         face_ids = [face["id"] for face in json_data.get("faces", [])]
 
         if face_ids:
-            
+        
             # Query existing IDs in BigQuery
             query = f"""
                 SELECT face.id FROM `{bigquery_client.project}.{BQ_DATASET}.{BQ_TABLE}`, UNNEST(faces) AS face
@@ -75,11 +108,12 @@ def gcs_to_bigquery(filename):
             query_job = bigquery_client.query(query)
             existing_ids = {row["id"] for row in query_job.result()}  # Convert to set
 
-
+            print('IDS', existing_ids)
 
             # Transform JSON into BigQuery-compatible format
             rows_to_insert = []
-            print("LEN", len(json_data.get("faces", [])))
+            # print("LEN", len(json_data.get("faces", [])))
+            # print('faces', json_data.get("faces", []))
             for face in json_data.get("faces", []):
                 if face["id"] not in existing_ids:
                 
@@ -89,6 +123,8 @@ def gcs_to_bigquery(filename):
                         "filename": json_data["filename"],
                         "faces": [{
                             "id": face["id"],
+                            "parent_face_id": json_data["parent_face_id"],
+                            "person_id": json_data["person_id"],
                             "score": face["score"],
                             "attributes": {
                                 "age": face["attributes"]["age"],
@@ -123,8 +159,9 @@ def gcs_to_bigquery(filename):
                     }
                     rows_to_insert.append(row)
                 else:
-                    print(f"Skipping existing record: {face['id']}")
-           
+                    print(f"Deleting existing record: {face['id']}")
+                    blob.delete()
+            
 
             # Insert data into BigQuery
             if rows_to_insert:
@@ -137,12 +174,10 @@ def gcs_to_bigquery(filename):
                     output_blob = OUTPUT_FOLDER + blob.name[len(INPUT_FOLDER):]
                     output_blob = bucket.rename_blob(blob, output_blob)
                     print(f"Moved {blob.name} to {output_blob.name}")
+
+
         else:
             print(f"No faces found in {blob.name}. Skipping...")
-        
-    except json.JSONDecodeError:
-        print(f"Error: Invalid JSON format in {filename}: {str(e)}")
-
 
 
 
@@ -208,6 +243,72 @@ def upload():
 
         # gcs_to_bigquery(filename)
         return jsonify({"message": "File uploaded successfully", "gcs_url": gcs_url}), 201
+
+
+
+def send_email1(json_data, filename):
+    """Send email with JSON data."""
+    print('filename', filename)
+    print('json_data', json_data)
+
+    return 
+
+@app.route('/email', methods=['POST'])
+def email():
+    """Handles JSON file upload from HTTP POST request."""
+   
+    if request.method == 'POST':
+        # Parse incoming JSON
+        data = request.get_json(force=True)
+        print("DATA", data)
+        # Upload to GCS
+        person_email = 'iuri.sampaio@omeletecompany.com'
+        send_email(
+            sender='lunavisionlabs@appspot.gserviceaccount.com', 
+            to='iuri.sampaio@gmail.com', 
+            subject="O&CO Vision: A person has been framed! ", 
+            body="body"
+        )
+
+        return jsonify({"status": "Email sent to {}".format(person_email)}), 200
+
+
+
+
+
+
+## Begin send Emails 
+
+def create_message(sender, to, subject, message_text):
+    message = MIMEText(message_text)
+    message['to'] = to
+    message['from'] = sender
+    message['subject'] = subject
+    return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode()}
+
+def send_email(sender, to, subject, body):
+    message = create_message(sender, to, subject, body)
+    send_message = service.users().messages().send(userId="me", body=message).execute()
+    print('Message Id: {}'.format(send_message['id']))
+    return send_message
+
+
+## END Sending Emails
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 @app.route('/')
