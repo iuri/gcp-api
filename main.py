@@ -103,18 +103,18 @@ def gcs_to_bigquery(filename):
             # Transform JSON into BigQuery-compatible format
             rows_to_insert = []
             # print("LEN", len(json_data.get("faces", [])))
-            # print('faces', json_data.get("faces", []))
+            print('faces', json_data.get("faces", []))
             for face in json_data.get("faces", []):
                 if face["id"] not in existing_ids:
-                
+                    print(f"Inserting new record: {face}")
                     row = {
                         "creation_date": json_data["creation_date"],
                         "host": json_data["host"],
                         "filename": json_data["filename"],
                         "faces": [{
                             "id": face["id"],
-                            "parent_face_id": face["parent_face_id"],
-                            "person_id": face["person_id"],
+                            "parent_face_id": face["parent_face_id"] if "parent_face_id" in face else None,
+                            "person_id": face["person_id"] if "person_id" in face else None,
                             "score": face["score"],
                             "attributes": {
                                 "age": face["attributes"]["age"],
