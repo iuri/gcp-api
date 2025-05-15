@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-
+from mailgun import send_simple_message
 
 
 # from google.cloud import storage
@@ -29,18 +29,8 @@ load_dotenv()
 GCS_BUCKET = os.environ.get("GCS_BUCKET_NAME")
 PROJECT_ID = "lunavisionlabs" # Replace with your GCP project ID
 BQ_DATASET = "computervision"  # Replace with your BigQuery dataset
-BQ_TABLE = "faces"  # Replace with your BigQuery table
-
-
-# Path to the credentials.json you downloaded
-SERVICE_ACCOUNT_FILE = './lunavisionlabs-48f46e544921.json'
-SCOPES = ['https://www.googleapis.com/auth/gmail.send']
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-
-
-service = build('gmail', 'v1', credentials=credentials)
-
+BQ_TBL_FACES = "faces"  # Replace with your BigQuery table
+BQ_TBL_PERSONS = "persons"  # Replace with your BigQuery table
 
 # Allowed Extensions
 ALLOWED_EXTENSIONS = {'json'}
@@ -80,7 +70,7 @@ def gcs_to_bigquery(filename):
     bigquery_client = bigquery.Client()
 
     # Define BigQuery table reference
-    table_ref = bigquery_client.dataset(BQ_DATASET).table(BQ_TABLE)
+    table_ref = bigquery_client.dataset(BQ_DATASET).table(BQ_TBL_FACES)
 
     # List files in the specified folder
     blobs = bucket.list_blobs(prefix='json')
@@ -102,7 +92,7 @@ def gcs_to_bigquery(filename):
         
             # Query existing IDs in BigQuery
             query = f"""
-                SELECT face.id FROM `{bigquery_client.project}.{BQ_DATASET}.{BQ_TABLE}`, UNNEST(faces) AS face
+                SELECT face.id FROM `{bigquery_client.project}.{BQ_DATASET}.{BQ_TBL_FACES}`, UNNEST(faces) AS face
                 WHERE face.id IN ({','.join([f"'{face_id}'" for face_id in face_ids])})
             """
             query_job = bigquery_client.query(query)
@@ -123,8 +113,8 @@ def gcs_to_bigquery(filename):
                         "filename": json_data["filename"],
                         "faces": [{
                             "id": face["id"],
-                            "parent_face_id": json_data["parent_face_id"],
-                            "person_id": json_data["person_id"],
+                            "parent_face_id": face["parent_face_id"],
+                            "person_id": face["person_id"],
                             "score": face["score"],
                             "attributes": {
                                 "age": face["attributes"]["age"],
@@ -245,13 +235,28 @@ def upload():
         return jsonify({"message": "File uploaded successfully", "gcs_url": gcs_url}), 201
 
 
-
-def send_email1(json_data, filename):
-    """Send email with JSON data."""
-    print('filename', filename)
-    print('json_data', json_data)
-
     return 
+
+
+
+def get_email_by_person_id(person_ids: list) -> dict:
+    # get email from bigquery table
+    bigquery_client = bigquery.Client()    
+    print("Getting emails for person_ids:", person_ids)
+    # Convert list of ids to tuple string for SQL IN clause
+    formatted_ids = ",".join([f"'{pid}'" for pid in person_ids])
+    print("Formatted IDs for query:", formatted_ids)
+    print(BQ_DATASET, BQ_TBL_PERSONS)
+    # Query existing IDs in BigQuery
+    query = f"""
+        SELECT person_id, email, name 
+        FROM `{bigquery_client.project}.{BQ_DATASET}.{BQ_TBL_PERSONS}`
+        WHERE person_id IN ({formatted_ids})
+    """
+    result = bigquery_client.query(query).result()
+
+    # Return a dictionary of {person_id: (email, name)}
+    return {row.person_id: (row.email, row.name) for row in result}
 
 @app.route('/email', methods=['POST'])
 def email():
@@ -261,17 +266,29 @@ def email():
         # Parse incoming JSON
         data = request.get_json(force=True)
         print("DATA", data)
-        # Upload to GCS
-        person_email = 'iuri.sampaio@omeletecompany.com'
-        send_email(
-            sender='lunavisionlabs@appspot.gserviceaccount.com', 
-            to='iuri.sampaio@gmail.com', 
-            subject="O&CO Vision: A person has been framed! ", 
-            body="body"
-        )
+        # Extract face IDs from the JSON file
+        # person_ids = [face["person_id"] for face in data.get("faces", []) if face.get("person_id")]
+        # print("PERSON IDS", person_ids)
+        
+        contact_info = [(face["person_id"], face["email"], face["name"]) for face in data.get("faces", []) if face.get("person_id")]
+        # contact_info = {}
+        # if person_ids:
+        #   contact_info = get_email_by_person_id(person_ids)
+        for person_id, email, name in contact_info:
+            print(f"Person ID: {person_id}, Email: {email}, Name: {name}")
+            response = send_email(
+                'growth.bi@omeletecompany.com', 
+                email, 
+                f"{name}, You has been framed by O&CO Vision!", 
+                json.dumps(data)
+            )
 
-        return jsonify({"status": "Email sent to {}".format(person_email)}), 200
-
+            return jsonify({"status": response}), 200
+            # return jsonify({"status": "Email sent to {}".format(person_email)}), 200
+        else:
+            return jsonify({"error": "No emails found"}), 404
+    else:
+        return jsonify({"error": "Invalid request method"}), 400
 
 
 
@@ -279,18 +296,34 @@ def email():
 
 ## Begin send Emails 
 
-def create_message(sender, to, subject, message_text):
-    message = MIMEText(message_text)
+def create_service(user_email):
+    # Path to the credentials.json you downloaded
+    SERVICE_ACCOUNT_FILE = './lunavisionlabs-48f46e544921.json'
+    SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+    USER_EMAIL = user_email
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=SCOPES,
+        subject=USER_EMAIL
+    )
+    delegated_credentials = credentials.with_subject(user_email)
+
+    service = build('gmail', 'v1', credentials=delegated_credentials)
+    return service
+
+def create_message(sender, to, subject, body_text):
+    message = MIMEText(body_text)
     message['to'] = to
     message['from'] = sender
     message['subject'] = subject
-    return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode()}
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    return {'raw': raw_message}
 
-def send_email(sender, to, subject, body):
-    message = create_message(sender, to, subject, body)
-    send_message = service.users().messages().send(userId="me", body=message).execute()
-    print('Message Id: {}'.format(send_message['id']))
-    return send_message
+def send_email(user_email, to, subject, body):
+    service = create_service(user_email)
+    message = create_message(user_email, to, subject, body)
+    send_result = service.users().messages().send(userId='me', body=message).execute()
+    return send_result
 
 
 ## END Sending Emails
