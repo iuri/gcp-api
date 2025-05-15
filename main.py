@@ -279,7 +279,7 @@ def email():
             response = send_email(
                 'growth.bi@omeletecompany.com', 
                 email, 
-                f"{name}, You has been framed by O&CO Vision!", 
+                f"{name}, You've been framed by O&CO Vision!", 
                 json.dumps(data)
             )
 
